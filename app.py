@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -117,8 +118,34 @@ def authenticate(serial: str) -> dict:
     log.info(f"Yangi token olindi, expire: {data['expires_at']}")
     return data
 
+def parse_iso_datetime(s: str) -> datetime:
+    s = s.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+
+    match = re.match(
+        r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?([+-]\d{2}:\d{2})?$', s
+    )
+    if not match:
+        return datetime.fromisoformat(s)
+
+    base, frac, tz = match.groups()
+
+    if frac:
+        digits = frac[1:]
+        digits = (digits + "000000")[:6]
+        frac = "." + digits
+    else:
+        frac = ""
+
+    if not tz:
+        tz = "+00:00"
+
+    normalized = f"{base}{frac}{tz}"
+    return datetime.fromisoformat(normalized)
+
 def is_token_expired(expires_at_str: str) -> bool:
-    expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+    expires_at = parse_iso_datetime(expires_at_str)
     now = datetime.now(timezone.utc)
     remaining = (expires_at - now).total_seconds()
     return remaining <= TOKEN_REFRESH_BUFFER_SECONDS
