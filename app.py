@@ -203,9 +203,14 @@ def bootstrap():
     log.info("Bootstrap tugadi. Qurilma endi doimiy verified holatda.")
 
 def get_download_url(version: str) -> str:
+    token = ensure_valid_token()
     url = BASE_URL + SOFTWARE_DOWNLOAD_PATH.format(version=version)
     log.info(f"Software-release download URL so'ralmoqda: {url}")
-    resp = requests.get(url, timeout=HTTP_TIMEOUT)
+    resp = requests.get(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=HTTP_TIMEOUT,
+    )
     if resp.status_code != 200:
         raise RuntimeError(
             f"Download-url so'rovi muvaffaqiyatsiz. Status: {resp.status_code}, Body: {resp.text}"
