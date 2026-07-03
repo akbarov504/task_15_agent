@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 from datetime import datetime, timezone
@@ -16,9 +17,16 @@ VERIFICATION_PATH = "/services/glsmanagement/api/devices/factory/verification/{s
 AUTHENTICATE_PATH = "/services/glsstream/api/truck/authenticate/v2"
 INFO_PATH = "/services/glsstream/api/truck/info/v2"
 
+SOFTWARE_DOWNLOAD_PATH = "/services/glsstream/api/software-release/download-url/agent/{version}"
+SOFTWARE_VERSION = "1.0.0-beta"
+
 SERIAL_NUMBER_FILE = "/sys/firmware/devicetree/base/serial-number"
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_state.json")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE_FILE = os.path.join(SCRIPT_DIR, "agent_state.json")
+
+DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "downloaded")
+LOCAL_BINARY_PATH = os.path.join(DOWNLOAD_DIR, f"agent-{SOFTWARE_VERSION}")
 
 TOKEN_REFRESH_BUFFER_SECONDS = 60
 VERIFICATION_RETRY_SECONDS = 10
@@ -194,6 +202,62 @@ def bootstrap():
     save_state()
     log.info("Bootstrap tugadi. Qurilma endi doimiy verified holatda.")
 
+def get_download_url(version: str) -> str:
+    url = BASE_URL + SOFTWARE_DOWNLOAD_PATH.format(version=version)
+    log.info(f"Software-release download URL so'ralmoqda: {url}")
+    resp = requests.get(url, timeout=HTTP_TIMEOUT)
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Download-url so'rovi muvaffaqiyatsiz. Status: {resp.status_code}, Body: {resp.text}"
+        )
+
+    data = resp.json()
+    download_url = data.get("url")
+    if not download_url:
+        raise RuntimeError(f"Javobda 'url' key topilmadi: {data}")
+
+    log.info(f"Download URL olindi: {download_url}")
+    return download_url
+
+def download_binary(download_url: str, dest_path: str):
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    log.info(f"Fayl yuklab olinmoqda: {download_url}")
+    with requests.get(download_url, stream=True, timeout=60) as resp:
+        if resp.status_code != 200:
+            raise RuntimeError(f"Fayl yuklab olishda xato. Status: {resp.status_code}")
+        with open(dest_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+    os.chmod(dest_path, 0o755)
+    log.info(f"Fayl yuklab olindi va executable qilindi: {dest_path}")
+
+def launch_agent_binary():
+    try:
+        if os.path.exists(LOCAL_BINARY_PATH):
+            log.info(f"Boshqaruvchi agent allaqachon yuklab olingan, qayta yuklanmaydi: {LOCAL_BINARY_PATH}")
+        else:
+            download_url = get_download_url(SOFTWARE_VERSION)
+            download_binary(download_url, LOCAL_BINARY_PATH)
+    except Exception as e:
+        log.error(
+            f"Boshqaruvchi agentni yuklab olishda xato: {e}. "
+            f"Binary ishga tushirilmaydi, lekin Flask server ishlashda davom etadi."
+        )
+        return
+
+    log.info(f"Boshqaruvchi agent ishga tushirilmoqda: {LOCAL_BINARY_PATH}")
+    try:
+        proc = subprocess.Popen([LOCAL_BINARY_PATH])
+        log.info(f"Boshqaruvchi agent ishga tushdi (PID: {proc.pid}). Terminal buyruqlarni kutmoqda.")
+        exit_code = proc.wait()
+        if exit_code == 0:
+            log.info(f"Boshqaruvchi agent normal tugadi. Exit code: {exit_code}")
+        else:
+            log.warning(f"Boshqaruvchi agent xato bilan tugadi. Exit code: {exit_code}")
+    except Exception as e:
+        log.error(f"Boshqaruvchi agentni ishga tushirishda xato: {e}")
+
 @app.route("/token", methods=["GET"])
 def get_token():
     try:
@@ -238,5 +302,14 @@ def health():
 
 if __name__ == "__main__":
     bootstrap()
-    log.info(f"Flask server ishga tushmoqda: http://{FLASK_HOST}:{FLASK_PORT}")
-    app.run(host=FLASK_HOST, port=FLASK_PORT)
+
+    flask_thread = threading.Thread(
+        target=lambda: app.run(host=FLASK_HOST, port=FLASK_PORT, use_reloader=False),
+        daemon=True,
+    )
+    flask_thread.start()
+    log.info(f"Flask server background'da ishga tushdi: http://{FLASK_HOST}:{FLASK_PORT}")
+
+    launch_agent_binary()
+    log.info("Boshqaruvchi agent jarayoni tugadi. Flask server hali ham ishlamoqda...")
+    flask_thread.join()
