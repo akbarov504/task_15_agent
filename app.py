@@ -17,7 +17,7 @@ VERIFICATION_PATH = "/services/glsmanagement/api/devices/factory/verification/{s
 AUTHENTICATE_PATH = "/services/glsstream/api/truck/authenticate/v2"
 INFO_PATH = "/services/glsstream/api/truck/info/v2"
 
-SOFTWARE_DOWNLOAD_PATH = "/services/glsstream/api/software-release/download-url/AGENT/{version}"
+SOFTWARE_DOWNLOAD_PATH = "/services/glsmanagement/api/software-release/download-url/AGENT/{version}"
 SOFTWARE_VERSION = "1.0.0-beta"
 
 SERIAL_NUMBER_FILE = "/sys/firmware/devicetree/base/serial-number"
