@@ -199,7 +199,7 @@ def get_token():
     try:
         token = ensure_valid_token()
         return jsonify({
-            "id_token": token,
+            "token": token,
             "expires_at": _state.get("expires_at"),
         })
     except Exception as e:
